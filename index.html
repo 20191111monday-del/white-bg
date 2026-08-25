@@ -5,24 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IBB 純白背景メーカー</title>
   <style>
-    body { font-family: sans-serif; padding: 20px; background: #f0f2f5; color: #333; text-align: center; }
-    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 450px; margin: 0 auto; }
+    body { font-family: sans-serif; padding: 15px; background: #f0f2f5; color: #333; text-align: center; }
+    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 480px; margin: 0 auto; }
     h1 { font-size: 1.2em; margin-bottom: 15px; color: #004080; }
-    .btn { display: block; width: 100%; padding: 15px; font-size: 1.1em; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin-top: 15px; box-sizing: border-box; }
+    .btn { display: block; width: 100%; padding: 14px; font-size: 1.05em; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin-top: 15px; box-sizing: border-box; }
     .btn-select { background: #004080; color: white; }
     .btn-save { background: #27ae60; color: white; text-decoration: none; display: none; }
-    .controls { margin-top: 15px; text-align: left; font-size: 0.85em; color: #555; background: #f9f9f9; padding: 10px; border-radius: 6px; }
-    .slider-row { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; }
+    .controls { margin-top: 15px; text-align: left; font-size: 0.85em; color: #444; background: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #e9ecef; }
+    .slider-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .slider-row:last-child { margin-bottom: 0; }
+    .slider-row span { font-weight: bold; }
+    .slider-row input { width: 55%; }
     #preview-area { margin-top: 20px; display: none; }
-    #result-img { width: 100%; max-height: 350px; object-fit: contain; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
-    #status { margin-top: 15px; font-weight: bold; color: #d35400; font-size: 0.95em; }
+    #result-img { width: 100%; max-height: 380px; object-fit: contain; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
+    #status { margin-top: 15px; font-weight: bold; color: #d35400; font-size: 0.9em; }
     input[type="file"] { display: none; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>IBB 純白背景メーカー</h1>
-    <p style="font-size: 0.85em; color: #666;">写真を選ぶと外側の背景だけを純白にします</p>
+    <p style="font-size: 0.85em; color: #666;">写真を選ぶと影を残さず背景を純白に変換します</p>
     
     <label class="btn btn-select" id="select-label">
       📷 写真を選択して白抜き
@@ -31,8 +34,12 @@
 
     <div class="controls" id="controls" style="display:none;">
       <div class="slider-row">
-        <span>背景検出の感度（許容差）:</span>
-        <input type="range" id="tolerance" min="10" max="80" value="35" oninput="applyFloodFill()">
+        <span>影の除去強度:</span>
+        <input type="range" id="tolerance" min="15" max="90" value="45" oninput="processWhiteout()">
+      </div>
+      <div class="slider-row">
+        <span>本の輪郭ガード:</span>
+        <input type="range" id="edgeGuard" min="10" max="60" value="30" oninput="processWhiteout()">
       </div>
     </div>
 
@@ -66,17 +73,19 @@
         img.onload = function() {
           currentImage = img;
           controls.style.display = 'block';
-          applyFloodFill();
+          processWhiteout();
         };
         img.src = event.target.result;
       };
       reader.readAsDataURL(file);
     });
 
-    function applyFloodFill() {
+    function processWhiteout() {
       if (!currentImage) return;
 
-      const tolerance = parseInt(document.getElementById('tolerance').value, 10);
+      const tol = parseInt(document.getElementById('tolerance').value, 10);
+      const edgeGuard = parseInt(document.getElementById('edgeGuard').value, 10);
+
       const canvas = document.createElement('canvas');
       let maxDim = 1000;
       let width = currentImage.width;
@@ -96,30 +105,57 @@
       const ctx = canvas.getContext('2d');
       ctx.drawImage(currentImage, 0, 0, width, height);
 
-      const imgData = ctx.getImageData(0, 0, width, height);
-      const data = imgData.data;
-      const visited = new Uint8Array(width * height);
+      const srcImgData = ctx.getImageData(0, 0, width, height);
+      const src = srcImgData.data;
+      const outImgData = ctx.createImageData(width, height);
+      const out = outImgData.data;
 
-      // 四隅の色を基準色としてサンプリング
-      const bgR = data[0], bgG = data[1], bgB = data[2];
-
-      function colorMatch(idx) {
-        const r = data[idx], g = data[idx+1], b = data[idx+2];
-        return Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB) < tolerance * 3;
+      // 元画像をコピー
+      for (let i = 0; i < src.length; i++) {
+        out[i] = src[i];
       }
 
-      // 外周（エッジ）から塗りつぶしを開始するキュー
+      // 1. エッジ（輪郭境界）マップの作成（本の境界線を検出）
+      const isEdge = new Uint8Array(width * height);
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const idx = (y * width + x) * 4;
+          const r = src[idx], g = src[idx+1], b = src[idx+2];
+
+          const rightIdx = (y * width + (x + 1)) * 4;
+          const downIdx = ((y + 1) * width + x) * 4;
+
+          const diffR = Math.abs(r - src[rightIdx]) + Math.abs(r - src[downIdx]);
+          const diffG = Math.abs(g - src[rightIdx+1]) + Math.abs(g - src[downIdx+1]);
+          const diffB = Math.abs(b - src[rightIdx+2]) + Math.abs(b - src[downIdx+2]);
+
+          if ((diffR + diffG + diffB) > edgeGuard * 4) {
+            isEdge[y * width + x] = 1;
+          }
+        }
+      }
+
+      // 2. 外周からの適応型 Flood Fill
+      const visited = new Uint8Array(width * height);
       const queue = [];
+
+      // 四隅・外周ピクセルをキューに投入
       for (let x = 0; x < width; x++) {
-        queue.push(x, 0);
-        queue.push(x, height - 1);
+        queue.push(x, 0, src[x * 4], src[x * 4 + 1], src[x * 4 + 2]);
+        const bIdx = ((height - 1) * width + x) * 4;
+        queue.push(x, height - 1, src[bIdx], src[bIdx + 1], src[bIdx + 2]);
       }
       for (let y = 0; y < height; y++) {
-        queue.push(0, y);
-        queue.push(width - 1, y);
+        const lIdx = (y * width) * 4;
+        queue.push(0, y, src[lIdx], src[lIdx + 1], src[lIdx + 2]);
+        const rIdx = (y * width + (width - 1)) * 4;
+        queue.push(width - 1, y, src[rIdx], src[rIdx + 1], src[rIdx + 2]);
       }
 
       while (queue.length > 0) {
+        const refB = queue.pop();
+        const refG = queue.pop();
+        const refR = queue.pop();
         const y = queue.pop();
         const x = queue.pop();
         const pIdx = y * width + x;
@@ -128,28 +164,35 @@
         visited[pIdx] = 1;
 
         const dIdx = pIdx * 4;
-        if (colorMatch(dIdx)) {
-          // 純白に置換
-          data[dIdx] = 255;
-          data[dIdx+1] = 255;
-          data[dIdx+2] = 255;
+        const curR = src[dIdx];
+        const curG = src[dIdx+1];
+        const curB = src[dIdx+2];
 
-          // 4方向へ探索
-          if (x > 0 && !visited[pIdx - 1]) queue.push(x - 1, y);
-          if (x < width - 1 && !visited[pIdx + 1]) queue.push(x + 1, y);
-          if (y > 0 && !visited[pIdx - width]) queue.push(x, y - 1);
-          if (y < height - 1 && !visited[pIdx + width]) queue.push(x, y + 1);
+        // 直前の色との差分判定（なだらかな影も追従）
+        const colorDiff = Math.abs(curR - refR) + Math.abs(curG - refG) + Math.abs(curB - refB);
+
+        // エッジに衝突しておらず、色の変化が許容範囲内なら背景として白化
+        if (!isEdge[pIdx] && colorDiff < tol * 3) {
+          out[dIdx] = 255;
+          out[dIdx+1] = 255;
+          out[dIdx+2] = 255;
+
+          // 4近傍探索（隣接ピクセルへ伝播）
+          if (x > 0 && !visited[pIdx - 1]) queue.push(x - 1, y, curR, curG, curB);
+          if (x < width - 1 && !visited[pIdx + 1]) queue.push(x + 1, y, curR, curG, curB);
+          if (y > 0 && !visited[pIdx - width]) queue.push(x, y - 1, curR, curG, curB);
+          if (y < height - 1 && !visited[pIdx + width]) queue.push(x, y + 1, curR, curG, curB);
         }
       }
 
-      ctx.putImageData(imgData, 0, 0);
+      ctx.putImageData(outImgData, 0, 0);
 
       const finalUrl = canvas.toDataURL('image/jpeg', 0.85);
       document.getElementById('result-img').src = finalUrl;
       const saveBtn = document.getElementById('save-btn');
       saveBtn.href = finalUrl;
 
-      document.getElementById('status').innerText = '✅ 外側背景の白抜き完了！感度スライダーで調整できます';
+      document.getElementById('status').innerText = '✅ 処理完了！2つのスライダーで仕上がりを微調整できます';
       document.getElementById('preview-area').style.display = 'block';
       saveBtn.style.display = 'block';
     }
