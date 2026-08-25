@@ -35,25 +35,25 @@
     <div class="controls" id="controls" style="display:none;">
       <div class="slider-row">
         <span>🤖 自動検出感度:</span>
-        <input type="range" id="sensitivity" min="10" max="80" value="35" oninput="runCrop()">
+        <input type="range" id="sensitivity" min="5" max="100" value="40" oninput="detectBounds(); runCrop();">
       </div>
       
-      <div class="section-label">📐 4辺の個別キワ追い込み</div>
+      <div class="section-label">📐 4辺の個別キワ追い込み（強力版）</div>
       <div class="slider-row">
         <span>上辺 (Top):</span>
-        <input type="range" id="padTop" min="-50" max="50" value="0" oninput="runCrop()">
+        <input type="range" id="padTop" min="-150" max="150" value="0" oninput="runCrop()">
       </div>
       <div class="slider-row">
         <span>下辺 (Bottom):</span>
-        <input type="range" id="padBottom" min="-50" max="50" value="0" oninput="runCrop()">
+        <input type="range" id="padBottom" min="-150" max="150" value="0" oninput="runCrop()">
       </div>
       <div class="slider-row">
         <span>左辺 (Left):</span>
-        <input type="range" id="padLeft" min="-50" max="50" value="0" oninput="runCrop()">
+        <input type="range" id="padLeft" min="-150" max="150" value="0" oninput="runCrop()">
       </div>
       <div class="slider-row">
         <span>右辺 (Right):</span>
-        <input type="range" id="padRight" min="-50" max="50" value="0" oninput="runCrop()">
+        <input type="range" id="padRight" min="-150" max="150" value="0" oninput="runCrop()">
       </div>
     </div>
 
@@ -82,7 +82,6 @@
       previewArea.style.display = 'none';
       saveBtn.style.display = 'none';
 
-      // スライダー位置をリセット
       document.getElementById('padTop').value = 0;
       document.getElementById('padBottom').value = 0;
       document.getElementById('padLeft').value = 0;
@@ -102,7 +101,6 @@
       reader.readAsDataURL(file);
     });
 
-    // 1. 本の基本輪郭を検出
     function detectBounds() {
       if (!rawImage) return;
 
@@ -129,7 +127,7 @@
       const imgData = ctx.getImageData(0, 0, width, height);
       const d = imgData.data;
 
-      // 四隅からベース背景色を取得
+      // 四隅から背景の基準色をサンプリング
       const cornerIdxs = [0, (width - 1) * 4, ((height - 1) * width) * 4, ((height - 1) * width + (width - 1)) * 4];
       let bgR = 0, bgG = 0, bgB = 0;
       cornerIdxs.forEach(idx => {
@@ -155,7 +153,6 @@
       baseBounds = { top, bottom, left, right, width, height, canvas };
     }
 
-    // 2. 4辺の個別スライダーを反映して純白キャンバスへ描画
     function runCrop() {
       if (!rawImage || !baseBounds.canvas) return;
 
@@ -166,18 +163,18 @@
 
       const { width, height, canvas } = baseBounds;
 
-      // 各辺のキワを個別に調整（正の値で外側へ、負の値で内側へ）
-      let finalTop = Math.max(0, baseBounds.top - pTop);
-      let finalBottom = Math.min(height, baseBounds.bottom + pBottom);
-      let finalLeft = Math.max(0, baseBounds.left - pLeft);
-      let finalRight = Math.min(width, baseBounds.right + pRight);
+      // 限界まで内側へ食い込ませられるよう計算
+      let finalTop = Math.max(0, baseBounds.top + pTop);
+      let finalBottom = Math.min(height, baseBounds.bottom - pBottom);
+      let finalLeft = Math.max(0, baseBounds.left + pLeft);
+      let finalRight = Math.min(width, baseBounds.right - pRight);
 
       const outCanvas = document.createElement('canvas');
       outCanvas.width = width;
       outCanvas.height = height;
       const outCtx = outCanvas.getContext('2d');
 
-      // 完全な純白(RGB: 255, 255, 255)で下地を塗りつぶし
+      // 純白(RGB: 255, 255, 255)で初期化
       outCtx.fillStyle = '#FFFFFF';
       outCtx.fillRect(0, 0, width, height);
 
@@ -197,7 +194,7 @@
       const saveBtn = document.getElementById('save-btn');
       saveBtn.href = finalUrl;
 
-      document.getElementById('status').innerText = '✅ 完了！残った背景は4辺のスライダーで追い込めます';
+      document.getElementById('status').innerText = '✅ 完了！スライダーで輪郭のキワまで追い込めます';
       document.getElementById('preview-area').style.display = 'block';
       saveBtn.style.display = 'block';
     }
