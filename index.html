@@ -25,7 +25,7 @@
 <body>
   <div class="card">
     <h1>IBB 純白背景メーカー</h1>
-    <p style="font-size: 0.85em; color: #666;">写真を選ぶと影を残さず背景を純白に変換します</p>
+    <p style="font-size: 0.85em; color: #666;">本の外側を完全な純白（RGB 255）で塗りつぶします</p>
     
     <label class="btn btn-select" id="select-label">
       📷 写真を選択して白抜き
@@ -34,12 +34,12 @@
 
     <div class="controls" id="controls" style="display:none;">
       <div class="slider-row">
-        <span>影の除去強度:</span>
-        <input type="range" id="tolerance" min="15" max="90" value="45" oninput="processWhiteout()">
+        <span>境界の自動検出感度:</span>
+        <input type="range" id="sensitivity" min="10" max="80" value="35" oninput="renderResult()">
       </div>
       <div class="slider-row">
-        <span>本の輪郭ガード:</span>
-        <input type="range" id="edgeGuard" min="10" max="60" value="30" oninput="processWhiteout()">
+        <span>外枠のマージン微調整:</span>
+        <input type="range" id="marginOffset" min="-30" max="30" value="0" oninput="renderResult()">
       </div>
     </div>
 
@@ -52,7 +52,7 @@
   </div>
 
   <script>
-    let currentImage = null;
+    let originalImage = null;
 
     document.getElementById('file-input').addEventListener('change', function(e) {
       const file = e.target.files[0];
@@ -63,7 +63,7 @@
       const saveBtn = document.getElementById('save-btn');
       const controls = document.getElementById('controls');
 
-      status.innerText = '🔄 処理中...';
+      status.innerText = '🔄 輪郭解析中...';
       previewArea.style.display = 'none';
       saveBtn.style.display = 'none';
 
@@ -71,25 +71,25 @@
       reader.onload = function(event) {
         const img = new Image();
         img.onload = function() {
-          currentImage = img;
+          originalImage = img;
           controls.style.display = 'block';
-          processWhiteout();
+          renderResult();
         };
         img.src = event.target.result;
       };
       reader.readAsDataURL(file);
     });
 
-    function processWhiteout() {
-      if (!currentImage) return;
+    function renderResult() {
+      if (!originalImage) return;
 
-      const tol = parseInt(document.getElementById('tolerance').value, 10);
-      const edgeGuard = parseInt(document.getElementById('edgeGuard').value, 10);
+      const sensitivity = parseInt(document.getElementById('sensitivity').value, 10);
+      const marginOffset = parseInt(document.getElementById('marginOffset').value, 10);
 
       const canvas = document.createElement('canvas');
-      let maxDim = 1000;
-      let width = currentImage.width;
-      let height = currentImage.height;
+      let maxDim = 1200;
+      let width = originalImage.width;
+      let height = originalImage.height;
 
       if (width > height) {
         if (width > maxDim) { height *= maxDim / width; width = maxDim; }
@@ -103,96 +103,75 @@
       canvas.height = height;
 
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(currentImage, 0, 0, width, height);
+      ctx.drawImage(originalImage, 0, 0, width, height);
 
-      const srcImgData = ctx.getImageData(0, 0, width, height);
-      const src = srcImgData.data;
-      const outImgData = ctx.createImageData(width, height);
-      const out = outImgData.data;
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const data = imgData.data;
 
-      // 元画像をコピー
-      for (let i = 0; i < src.length; i++) {
-        out[i] = src[i];
-      }
+      // 四隅の色から背景のベースカラーをサンプリング
+      const sampleCorners = [
+        [0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]
+      ];
+      let bgR = 0, bgG = 0, bgB = 0;
+      sampleCorners.forEach(([cx, cy]) => {
+        const idx = (cy * width + cx) * 4;
+        bgR += data[idx];
+        bgG += data[idx + 1];
+        bgB += data[idx + 2];
+      });
+      bgR /= 4; bgG /= 4; bgB /= 4;
 
-      // 1. エッジ（輪郭境界）マップの作成（本の境界線を検出）
-      const isEdge = new Uint8Array(width * height);
-      for (let y = 1; y < height - 1; y++) {
-        for (let x = 1; x < width - 1; x++) {
+      // 各行・列をスキャンして「被写体（本）」の境界座標（Top, Bottom, Left, Right）を特定
+      let top = height, bottom = 0, left = width, right = 0;
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
           const idx = (y * width + x) * 4;
-          const r = src[idx], g = src[idx+1], b = src[idx+2];
+          const diff = Math.abs(data[idx] - bgR) + Math.abs(data[idx+1] - bgG) + Math.abs(data[idx+2] - bgB);
 
-          const rightIdx = (y * width + (x + 1)) * 4;
-          const downIdx = ((y + 1) * width + x) * 4;
-
-          const diffR = Math.abs(r - src[rightIdx]) + Math.abs(r - src[downIdx]);
-          const diffG = Math.abs(g - src[rightIdx+1]) + Math.abs(g - src[downIdx+1]);
-          const diffB = Math.abs(b - src[rightIdx+2]) + Math.abs(b - src[downIdx+2]);
-
-          if ((diffR + diffG + diffB) > edgeGuard * 4) {
-            isEdge[y * width + x] = 1;
+          // 背景色から一定以上離れたピクセルを「本」と判定
+          if (diff > sensitivity * 3) {
+            if (x < left) left = x;
+            if (x > right) right = x;
+            if (y < top) top = y;
+            if (y > bottom) bottom = y;
           }
         }
       }
 
-      // 2. 外周からの適応型 Flood Fill
-      const visited = new Uint8Array(width * height);
-      const queue = [];
+      // マージン調整を反映（本の内側を削らないよう安全側へシフト）
+      left = Math.max(0, left - marginOffset);
+      right = Math.min(width, right + marginOffset);
+      top = Math.max(0, top - marginOffset);
+      bottom = Math.min(height, bottom + marginOffset);
 
-      // 四隅・外周ピクセルをキューに投入
-      for (let x = 0; x < width; x++) {
-        queue.push(x, 0, src[x * 4], src[x * 4 + 1], src[x * 4 + 2]);
-        const bIdx = ((height - 1) * width + x) * 4;
-        queue.push(x, height - 1, src[bIdx], src[bIdx + 1], src[bIdx + 2]);
-      }
-      for (let y = 0; y < height; y++) {
-        const lIdx = (y * width) * 4;
-        queue.push(0, y, src[lIdx], src[lIdx + 1], src[lIdx + 2]);
-        const rIdx = (y * width + (width - 1)) * 4;
-        queue.push(width - 1, y, src[rIdx], src[rIdx + 1], src[rIdx + 2]);
-      }
+      // 出力用キャンバスを純白で初期化
+      const outCanvas = document.createElement('canvas');
+      outCanvas.width = width;
+      outCanvas.height = height;
+      const outCtx = outCanvas.getContext('2d');
 
-      while (queue.length > 0) {
-        const refB = queue.pop();
-        const refG = queue.pop();
-        const refR = queue.pop();
-        const y = queue.pop();
-        const x = queue.pop();
-        const pIdx = y * width + x;
+      outCtx.fillStyle = '#FFFFFF';
+      outCtx.fillRect(0, 0, width, height);
 
-        if (visited[pIdx]) continue;
-        visited[pIdx] = 1;
+      // 検出した「本の領域」だけを元の画像から純白キャンバスへ転写
+      const bookW = right - left;
+      const bookH = bottom - top;
 
-        const dIdx = pIdx * 4;
-        const curR = src[dIdx];
-        const curG = src[dIdx+1];
-        const curB = src[dIdx+2];
-
-        // 直前の色との差分判定（なだらかな影も追従）
-        const colorDiff = Math.abs(curR - refR) + Math.abs(curG - refG) + Math.abs(curB - refB);
-
-        // エッジに衝突しておらず、色の変化が許容範囲内なら背景として白化
-        if (!isEdge[pIdx] && colorDiff < tol * 3) {
-          out[dIdx] = 255;
-          out[dIdx+1] = 255;
-          out[dIdx+2] = 255;
-
-          // 4近傍探索（隣接ピクセルへ伝播）
-          if (x > 0 && !visited[pIdx - 1]) queue.push(x - 1, y, curR, curG, curB);
-          if (x < width - 1 && !visited[pIdx + 1]) queue.push(x + 1, y, curR, curG, curB);
-          if (y > 0 && !visited[pIdx - width]) queue.push(x, y - 1, curR, curG, curB);
-          if (y < height - 1 && !visited[pIdx + width]) queue.push(x, y + 1, curR, curG, curB);
-        }
+      if (bookW > 0 && bookH > 0) {
+        outCtx.drawImage(
+          canvas,
+          left, top, bookW, bookH, // 元画像からの切り出し範囲
+          left, top, bookW, bookH  // 描画先
+        );
       }
 
-      ctx.putImageData(outImgData, 0, 0);
-
-      const finalUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const finalUrl = outCanvas.toDataURL('image/jpeg', 0.85);
       document.getElementById('result-img').src = finalUrl;
       const saveBtn = document.getElementById('save-btn');
       saveBtn.href = finalUrl;
 
-      document.getElementById('status').innerText = '✅ 処理完了！2つのスライダーで仕上がりを微調整できます';
+      document.getElementById('status').innerText = '✅ 外側を完全純白化しました！スライダーで枠幅を微調整できます';
       document.getElementById('preview-area').style.display = 'block';
       saveBtn.style.display = 'block';
     }
