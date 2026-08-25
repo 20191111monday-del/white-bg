@@ -5,27 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IBB 純白背景メーカー</title>
   <style>
-    body { font-family: sans-serif; padding: 15px; background: #f0f2f5; color: #333; text-align: center; }
-    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 480px; margin: 0 auto; }
-    h1 { font-size: 1.2em; margin-bottom: 15px; color: #004080; }
-    .btn { display: block; width: 100%; padding: 14px; font-size: 1.05em; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin-top: 15px; box-sizing: border-box; }
+    body { font-family: sans-serif; padding: 12px; background: #f0f2f5; color: #333; text-align: center; }
+    .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 1.15em; margin-bottom: 10px; color: #004080; }
+    .btn { display: block; width: 100%; padding: 14px; font-size: 1.05em; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin-top: 10px; box-sizing: border-box; }
     .btn-select { background: #004080; color: white; }
     .btn-save { background: #27ae60; color: white; text-decoration: none; display: none; }
-    .controls { margin-top: 15px; text-align: left; font-size: 0.85em; color: #444; background: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #e9ecef; }
-    .slider-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .controls { margin-top: 12px; text-align: left; font-size: 0.85em; color: #333; background: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #e9ecef; }
+    .slider-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
     .slider-row:last-child { margin-bottom: 0; }
-    .slider-row span { font-weight: bold; }
-    .slider-row input { width: 55%; }
-    #preview-area { margin-top: 20px; display: none; }
-    #result-img { width: 100%; max-height: 380px; object-fit: contain; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
-    #status { margin-top: 15px; font-weight: bold; color: #d35400; font-size: 0.9em; }
+    .slider-row span { font-weight: bold; width: 35%; }
+    .slider-row input { width: 60%; }
+    .section-label { font-weight: bold; color: #004080; margin-top: 8px; margin-bottom: 4px; border-bottom: 1px solid #ddd; padding-bottom: 2px; }
+    #preview-area { margin-top: 15px; display: none; }
+    #result-img { width: 100%; max-height: 360px; object-fit: contain; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
+    #status { margin-top: 10px; font-weight: bold; color: #d35400; font-size: 0.85em; }
     input[type="file"] { display: none; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>IBB 純白背景メーカー</h1>
-    <p style="font-size: 0.85em; color: #666;">本の外側を完全な純白（RGB 255）で塗りつぶします</p>
     
     <label class="btn btn-select" id="select-label">
       📷 写真を選択して白抜き
@@ -34,12 +34,26 @@
 
     <div class="controls" id="controls" style="display:none;">
       <div class="slider-row">
-        <span>境界の自動検出感度:</span>
-        <input type="range" id="sensitivity" min="10" max="80" value="35" oninput="renderResult()">
+        <span>🤖 自動検出感度:</span>
+        <input type="range" id="sensitivity" min="10" max="80" value="35" oninput="runCrop()">
+      </div>
+      
+      <div class="section-label">📐 4辺の個別キワ追い込み</div>
+      <div class="slider-row">
+        <span>上辺 (Top):</span>
+        <input type="range" id="padTop" min="-50" max="50" value="0" oninput="runCrop()">
       </div>
       <div class="slider-row">
-        <span>外枠のマージン微調整:</span>
-        <input type="range" id="marginOffset" min="-30" max="30" value="0" oninput="renderResult()">
+        <span>下辺 (Bottom):</span>
+        <input type="range" id="padBottom" min="-50" max="50" value="0" oninput="runCrop()">
+      </div>
+      <div class="slider-row">
+        <span>左辺 (Left):</span>
+        <input type="range" id="padLeft" min="-50" max="50" value="0" oninput="runCrop()">
+      </div>
+      <div class="slider-row">
+        <span>右辺 (Right):</span>
+        <input type="range" id="padRight" min="-50" max="50" value="0" oninput="runCrop()">
       </div>
     </div>
 
@@ -47,12 +61,13 @@
 
     <div id="preview-area">
       <img id="result-img" src="" alt="処理結果">
-      <a id="save-btn" class="btn btn-save" download="white-bg.jpg">💾 白抜き画像を保存</a>
+      <a id="save-btn" class="btn btn-save" download="white-bg.jpg">💾 純白画像を保存</a>
     </div>
   </div>
 
   <script>
-    let originalImage = null;
+    let rawImage = null;
+    let baseBounds = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 };
 
     document.getElementById('file-input').addEventListener('change', function(e) {
       const file = e.target.files[0];
@@ -63,33 +78,38 @@
       const saveBtn = document.getElementById('save-btn');
       const controls = document.getElementById('controls');
 
-      status.innerText = '🔄 輪郭解析中...';
+      status.innerText = '🔄 解析中...';
       previewArea.style.display = 'none';
       saveBtn.style.display = 'none';
+
+      // スライダー位置をリセット
+      document.getElementById('padTop').value = 0;
+      document.getElementById('padBottom').value = 0;
+      document.getElementById('padLeft').value = 0;
+      document.getElementById('padRight').value = 0;
 
       const reader = new FileReader();
       reader.onload = function(event) {
         const img = new Image();
         img.onload = function() {
-          originalImage = img;
+          rawImage = img;
           controls.style.display = 'block';
-          renderResult();
+          detectBounds();
+          runCrop();
         };
         img.src = event.target.result;
       };
       reader.readAsDataURL(file);
     });
 
-    function renderResult() {
-      if (!originalImage) return;
+    // 1. 本の基本輪郭を検出
+    function detectBounds() {
+      if (!rawImage) return;
 
       const sensitivity = parseInt(document.getElementById('sensitivity').value, 10);
-      const marginOffset = parseInt(document.getElementById('marginOffset').value, 10);
-
-      const canvas = document.createElement('canvas');
       let maxDim = 1200;
-      let width = originalImage.width;
-      let height = originalImage.height;
+      let width = rawImage.width;
+      let height = rawImage.height;
 
       if (width > height) {
         if (width > maxDim) { height *= maxDim / width; width = maxDim; }
@@ -99,37 +119,30 @@
 
       width = Math.floor(width);
       height = Math.floor(height);
+
+      const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
-
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(originalImage, 0, 0, width, height);
+      ctx.drawImage(rawImage, 0, 0, width, height);
 
       const imgData = ctx.getImageData(0, 0, width, height);
-      const data = imgData.data;
+      const d = imgData.data;
 
-      // 四隅の色から背景のベースカラーをサンプリング
-      const sampleCorners = [
-        [0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]
-      ];
+      // 四隅からベース背景色を取得
+      const cornerIdxs = [0, (width - 1) * 4, ((height - 1) * width) * 4, ((height - 1) * width + (width - 1)) * 4];
       let bgR = 0, bgG = 0, bgB = 0;
-      sampleCorners.forEach(([cx, cy]) => {
-        const idx = (cy * width + cx) * 4;
-        bgR += data[idx];
-        bgG += data[idx + 1];
-        bgB += data[idx + 2];
+      cornerIdxs.forEach(idx => {
+        bgR += d[idx]; bgG += d[idx+1]; bgB += d[idx+2];
       });
       bgR /= 4; bgG /= 4; bgB /= 4;
 
-      // 各行・列をスキャンして「被写体（本）」の境界座標（Top, Bottom, Left, Right）を特定
       let top = height, bottom = 0, left = width, right = 0;
 
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const idx = (y * width + x) * 4;
-          const diff = Math.abs(data[idx] - bgR) + Math.abs(data[idx+1] - bgG) + Math.abs(data[idx+2] - bgB);
-
-          // 背景色から一定以上離れたピクセルを「本」と判定
+          const diff = Math.abs(d[idx] - bgR) + Math.abs(d[idx+1] - bgG) + Math.abs(d[idx+2] - bgB);
           if (diff > sensitivity * 3) {
             if (x < left) left = x;
             if (x > right) right = x;
@@ -139,30 +152,43 @@
         }
       }
 
-      // マージン調整を反映（本の内側を削らないよう安全側へシフト）
-      left = Math.max(0, left - marginOffset);
-      right = Math.min(width, right + marginOffset);
-      top = Math.max(0, top - marginOffset);
-      bottom = Math.min(height, bottom + marginOffset);
+      baseBounds = { top, bottom, left, right, width, height, canvas };
+    }
 
-      // 出力用キャンバスを純白で初期化
+    // 2. 4辺の個別スライダーを反映して純白キャンバスへ描画
+    function runCrop() {
+      if (!rawImage || !baseBounds.canvas) return;
+
+      const pTop = parseInt(document.getElementById('padTop').value, 10);
+      const pBottom = parseInt(document.getElementById('padBottom').value, 10);
+      const pLeft = parseInt(document.getElementById('padLeft').value, 10);
+      const pRight = parseInt(document.getElementById('padRight').value, 10);
+
+      const { width, height, canvas } = baseBounds;
+
+      // 各辺のキワを個別に調整（正の値で外側へ、負の値で内側へ）
+      let finalTop = Math.max(0, baseBounds.top - pTop);
+      let finalBottom = Math.min(height, baseBounds.bottom + pBottom);
+      let finalLeft = Math.max(0, baseBounds.left - pLeft);
+      let finalRight = Math.min(width, baseBounds.right + pRight);
+
       const outCanvas = document.createElement('canvas');
       outCanvas.width = width;
       outCanvas.height = height;
       const outCtx = outCanvas.getContext('2d');
 
+      // 完全な純白(RGB: 255, 255, 255)で下地を塗りつぶし
       outCtx.fillStyle = '#FFFFFF';
       outCtx.fillRect(0, 0, width, height);
 
-      // 検出した「本の領域」だけを元の画像から純白キャンバスへ転写
-      const bookW = right - left;
-      const bookH = bottom - top;
+      const cropW = finalRight - finalLeft;
+      const cropH = finalBottom - finalTop;
 
-      if (bookW > 0 && bookH > 0) {
+      if (cropW > 0 && cropH > 0) {
         outCtx.drawImage(
           canvas,
-          left, top, bookW, bookH, // 元画像からの切り出し範囲
-          left, top, bookW, bookH  // 描画先
+          finalLeft, finalTop, cropW, cropH,
+          finalLeft, finalTop, cropW, cropH
         );
       }
 
@@ -171,7 +197,7 @@
       const saveBtn = document.getElementById('save-btn');
       saveBtn.href = finalUrl;
 
-      document.getElementById('status').innerText = '✅ 外側を完全純白化しました！スライダーで枠幅を微調整できます';
+      document.getElementById('status').innerText = '✅ 完了！残った背景は4辺のスライダーで追い込めます';
       document.getElementById('preview-area').style.display = 'block';
       saveBtn.style.display = 'block';
     }
