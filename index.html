@@ -61,17 +61,22 @@
 
     <div id="preview-area">
       <img id="result-img" src="" alt="処理結果">
-      <a id="save-btn" class="btn btn-save" download="white-bg.jpg">💾 純白画像を保存</a>
+      <a id="save-btn" class="btn btn-save">💾 純白画像を保存</a>
     </div>
   </div>
 
   <script>
     let rawImage = null;
     let baseBounds = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 };
+    let originalBaseName = "image";
 
     document.getElementById('file-input').addEventListener('change', function(e) {
       const file = e.target.files[0];
       if (!file) return;
+
+      // 既存ファイル名から拡張子を除いたベース名を取得
+      const lastDotIndex = file.name.lastIndexOf('.');
+      originalBaseName = lastDotIndex !== -1 ? file.name.substring(0, lastDotIndex) : file.name;
 
       const status = document.getElementById('status');
       const previewArea = document.getElementById('preview-area');
@@ -127,7 +132,6 @@
       const imgData = ctx.getImageData(0, 0, width, height);
       const d = imgData.data;
 
-      // 四隅から背景の基準色をサンプリング
       const cornerIdxs = [0, (width - 1) * 4, ((height - 1) * width) * 4, ((height - 1) * width + (width - 1)) * 4];
       let bgR = 0, bgG = 0, bgB = 0;
       cornerIdxs.forEach(idx => {
@@ -163,18 +167,16 @@
 
       const { width, height, canvas } = baseBounds;
 
-      // 限界まで内側へ食い込ませられるよう計算
       let finalTop = Math.max(0, baseBounds.top + pTop);
-      let finalBottom = Math.min(height, baseBounds.bottom - pBottom);
-      let finalLeft = Math.max(0, baseBounds.left + pLeft);
-      let finalRight = Math.min(width, baseBounds.right - pRight);
+      let finalBottom = Math.min(height, baseBounds.bottom + pBottom);
+      let finalLeft = Math.max(0, baseBounds.left - pLeft);
+      let finalRight = Math.min(width, baseBounds.right + pRight);
 
       const outCanvas = document.createElement('canvas');
       outCanvas.width = width;
       outCanvas.height = height;
       const outCtx = outCanvas.getContext('2d');
 
-      // 純白(RGB: 255, 255, 255)で初期化
       outCtx.fillStyle = '#FFFFFF';
       outCtx.fillRect(0, 0, width, height);
 
@@ -191,8 +193,14 @@
 
       const finalUrl = outCanvas.toDataURL('image/jpeg', 0.85);
       document.getElementById('result-img').src = finalUrl;
+      
+      // ユニーク番号（タイムスタンプ）を付与したファイル名
+      const uniqueId = Date.now().toString().slice(-6);
+      const downloadName = `${originalBaseName}_white_${uniqueId}.jpg`;
+
       const saveBtn = document.getElementById('save-btn');
       saveBtn.href = finalUrl;
+      saveBtn.download = downloadName;
 
       document.getElementById('status').innerText = '✅ 完了！スライダーで輪郭のキワまで追い込めます';
       document.getElementById('preview-area').style.display = 'block';
