@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IBB 純白背景メーカー</title>
-  <!-- 安定動作版のAIライブラリ -->
-  <script src="https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.3/dist/imgly-background-removal.browser.min.js"></script>
+  <!-- 安定した最新ブラウザ用ライブラリ -->
+  <script src="https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.7/dist/bundle.js"></script>
   <style>
     body { font-family: sans-serif; padding: 20px; background: #f0f2f5; color: #333; text-align: center; }
     .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 450px; margin: 0 auto; }
@@ -15,7 +15,7 @@
     .btn-save { background: #27ae60; color: white; text-decoration: none; display: none; }
     #preview-area { margin-top: 20px; display: none; }
     #result-img { width: 100%; max-height: 350px; object-fit: contain; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
-    #status { margin-top: 15px; font-weight: bold; color: #d35400; font-size: 0.95em; line-height: 1.4; }
+    #status { margin-top: 15px; font-weight: bold; color: #d35400; font-size: 0.95em; line-height: 1.4; white-space: pre-wrap; }
     input[type="file"] { display: none; }
   </style>
 </head>
@@ -52,26 +52,33 @@
       saveBtn.style.display = 'none';
       label.style.pointerEvents = 'none';
       label.style.opacity = '0.6';
-      status.innerText = '🤖 AIモデルを読込中...\n(初回は数秒〜十数秒かかります)';
+      status.innerText = '🤖 AIエンジンを起動中...\n(初回はモデル読込に10〜20秒かかります)';
 
       try {
-        // セキュリティ制限を回避する明示的設定
+        // グローバルに定義されている関数を安全に特定
+        const removeBgFunc = (window.imgly && window.imgly.removeBackground) 
+                              ? window.imgly.removeBackground 
+                              : (window.imglyRemoveBackground || window.removeBackground);
+
+        if (!removeBgFunc) {
+          throw new Error('AIライブラリの読み込みに失敗しました。ページを再読み込みしてください。');
+        }
+
         const config = {
-          publicPath: "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.3/dist/",
-          fetchArgs: { mode: 'cors' },
+          publicPath: "https://cdn.jsdelivr.net/npm/@imgly/background-removal-data@1.5.7/dist/",
           progress: (key, current, total) => {
             if (total > 0) {
               const pct = Math.round((current / total) * 100);
-              status.innerText = `🤖 処理中... (${pct}%)`;
+              status.innerText = `🤖 AI処理中... (${pct}%)`;
             }
           }
         };
 
-        // 1. AIで背景を透明化
-        const imageBlob = await imglyRemoveBackground(file, config);
+        // 1. AIで背景を切り抜き
+        const imageBlob = await removeBgFunc(file, config);
         const url = URL.createObjectURL(imageBlob);
 
-        // 2. 純白キャンバスと合成して1200pxにリサイズ
+        // 2. 純白(RGB: 255,255,255)と合成し、1200pxにリサイズ
         status.innerText = '🎨 純白背景を合成中...';
         const img = new Image();
         img.onload = function() {
@@ -105,7 +112,7 @@
           saveBtn.style.display = 'block';
           label.style.pointerEvents = 'auto';
           label.style.opacity = '1';
-          fileInput.value = ''; // リセット
+          fileInput.value = '';
           URL.revokeObjectURL(url);
         };
         img.src = url;
