@@ -11,21 +11,30 @@
     .btn { display: block; width: 100%; padding: 15px; font-size: 1.1em; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin-top: 15px; box-sizing: border-box; }
     .btn-select { background: #004080; color: white; }
     .btn-save { background: #27ae60; color: white; text-decoration: none; display: none; }
+    .controls { margin-top: 15px; text-align: left; font-size: 0.85em; color: #555; background: #f9f9f9; padding: 10px; border-radius: 6px; }
+    .slider-row { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; }
     #preview-area { margin-top: 20px; display: none; }
     #result-img { width: 100%; max-height: 350px; object-fit: contain; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
-    #status { margin-top: 15px; font-weight: bold; color: #d35400; font-size: 0.95em; line-height: 1.4; white-space: pre-wrap; }
+    #status { margin-top: 15px; font-weight: bold; color: #d35400; font-size: 0.95em; }
     input[type="file"] { display: none; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>IBB 純白背景メーカー</h1>
-    <p style="font-size: 0.85em; color: #666;">写真を選ぶとAIが自動で背景を純白にします</p>
+    <p style="font-size: 0.85em; color: #666;">写真を選ぶと瞬時に背景を純白に変換します</p>
     
     <label class="btn btn-select" id="select-label">
       📷 写真を選択して白抜き
       <input type="file" id="file-input" accept="image/*">
     </label>
+
+    <div class="controls" id="controls" style="display:none;">
+      <div class="slider-row">
+        <span>白飛び・感度調整:</span>
+        <input type="range" id="threshold" min="180" max="250" value="220" oninput="applyWhiteout()">
+      </div>
+    </div>
 
     <div id="status"></div>
 
@@ -35,89 +44,83 @@
     </div>
   </div>
 
-  <!-- ES Modules 形式で安全にインポート -->
-  <script type="module">
-    import removeBackground from 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.7/+esm';
+  <script>
+    let currentImage = null;
 
-    const fileInput = document.getElementById('file-input');
-    const status = document.getElementById('status');
-    const label = document.getElementById('select-label');
-    const previewArea = document.getElementById('preview-area');
-    const resultImg = document.getElementById('result-img');
-    const saveBtn = document.getElementById('save-btn');
-
-    fileInput.addEventListener('change', async (e) => {
+    document.getElementById('file-input').addEventListener('change', function(e) {
       const file = e.target.files[0];
       if (!file) return;
 
+      const status = document.getElementById('status');
+      const previewArea = document.getElementById('preview-area');
+      const saveBtn = document.getElementById('save-btn');
+      const controls = document.getElementById('controls');
+
+      status.innerText = '🔄 処理中...';
       previewArea.style.display = 'none';
       saveBtn.style.display = 'none';
-      label.style.pointerEvents = 'none';
-      label.style.opacity = '0.6';
-      status.innerText = '🤖 AIエンジンを準備中...\n(初回はモデル読込に10〜20秒かかります)';
 
-      try {
-        const config = {
-          publicPath: "https://cdn.jsdelivr.net/npm/@imgly/background-removal-data@1.5.7/dist/",
-          progress: (key, current, total) => {
-            if (total > 0) {
-              const pct = Math.round((current / total) * 100);
-              status.innerText = `🤖 AI切り抜き中... (${pct}%)`;
-            }
-          }
-        };
-
-        // 1. AIで背景切り抜き
-        const imageBlob = await removeBackground(file, config);
-        const url = URL.createObjectURL(imageBlob);
-
-        // 2. 純白キャンバス(255, 255, 255)と合成し1200pxにリサイズ
-        status.innerText = '🎨 純白背景を合成中...';
+      const reader = new FileReader();
+      reader.onload = function(event) {
         const img = new Image();
         img.onload = function() {
-          const canvas = document.createElement('canvas');
-          let maxDim = 1200;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > maxDim) { height *= maxDim / width; width = maxDim; }
-          } else {
-            if (height > maxDim) { width *= maxDim / height; height = maxDim; }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-
-          // 背景をRGB(255, 255, 255)で塗りつぶす
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, 0, width, height);
-          ctx.drawImage(img, 0, 0, width, height);
-
-          // JPEG出力
-          const finalUrl = canvas.toDataURL('image/jpeg', 0.85);
-          resultImg.src = finalUrl;
-          saveBtn.href = finalUrl;
-
-          status.innerText = '✅ 白抜き完了！\n下のボタンか長押しで保存してください';
-          previewArea.style.display = 'block';
-          saveBtn.style.display = 'block';
-          label.style.pointerEvents = 'auto';
-          label.style.opacity = '1';
-          fileInput.value = '';
-          URL.revokeObjectURL(url);
+          currentImage = img;
+          controls.style.display = 'block';
+          applyWhiteout();
         };
-        img.src = url;
-
-      } catch (err) {
-        console.error(err);
-        status.innerText = '❌ 処理エラー: ' + (err.message || err);
-        label.style.pointerEvents = 'auto';
-        label.style.opacity = '1';
-        fileInput.value = '';
-      }
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
     });
+
+    function applyWhiteout() {
+      if (!currentImage) return;
+
+      const threshold = parseInt(document.getElementById('threshold').value, 10);
+      const canvas = document.createElement('canvas');
+      let maxDim = 1200;
+      let width = currentImage.width;
+      let height = currentImage.height;
+
+      if (width > height) {
+        if (width > maxDim) { height *= maxDim / width; width = maxDim; }
+      } else {
+        if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(currentImage, 0, 0, width, height);
+
+      // ピクセルデータを直接走査して明るい背景を純白(255,255,255)に置換
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const d = imgData.data;
+
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i];
+        const g = d[i+1];
+        const b = d[i+2];
+
+        // 指定のしきい値より明るい領域を完全な白に飛ばす
+        if (r > threshold && g > threshold && b > threshold) {
+          d[i] = 255;
+          d[i+1] = 255;
+          d[i+2] = 255;
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+
+      const finalUrl = canvas.toDataURL('image/jpeg', 0.85);
+      document.getElementById('result-img').src = finalUrl;
+      const saveBtn = document.getElementById('save-btn');
+      saveBtn.href = finalUrl;
+
+      document.getElementById('status').innerText = '✅ 完了！スライダーで微調整も可能です';
+      document.getElementById('preview-area').style.display = 'block';
+      saveBtn.style.display = 'block';
+    }
   </script>
 </body>
 </html>
