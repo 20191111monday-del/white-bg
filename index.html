@@ -22,7 +22,7 @@
 <body>
   <div class="card">
     <h1>IBB 純白背景メーカー</h1>
-    <p style="font-size: 0.85em; color: #666;">写真を選ぶと瞬時に背景を純白に変換します</p>
+    <p style="font-size: 0.85em; color: #666;">写真を選ぶと外側の背景だけを純白にします</p>
     
     <label class="btn btn-select" id="select-label">
       📷 写真を選択して白抜き
@@ -31,8 +31,8 @@
 
     <div class="controls" id="controls" style="display:none;">
       <div class="slider-row">
-        <span>白飛び・感度調整:</span>
-        <input type="range" id="threshold" min="180" max="250" value="220" oninput="applyWhiteout()">
+        <span>背景検出の感度（許容差）:</span>
+        <input type="range" id="tolerance" min="10" max="80" value="35" oninput="applyFloodFill()">
       </div>
     </div>
 
@@ -66,19 +66,19 @@
         img.onload = function() {
           currentImage = img;
           controls.style.display = 'block';
-          applyWhiteout();
+          applyFloodFill();
         };
         img.src = event.target.result;
       };
       reader.readAsDataURL(file);
     });
 
-    function applyWhiteout() {
+    function applyFloodFill() {
       if (!currentImage) return;
 
-      const threshold = parseInt(document.getElementById('threshold').value, 10);
+      const tolerance = parseInt(document.getElementById('tolerance').value, 10);
       const canvas = document.createElement('canvas');
-      let maxDim = 1200;
+      let maxDim = 1000;
       let width = currentImage.width;
       let height = currentImage.height;
 
@@ -88,25 +88,57 @@
         if (height > maxDim) { width *= maxDim / height; height = maxDim; }
       }
 
+      width = Math.floor(width);
+      height = Math.floor(height);
       canvas.width = width;
       canvas.height = height;
+
       const ctx = canvas.getContext('2d');
       ctx.drawImage(currentImage, 0, 0, width, height);
 
-      // ピクセルデータを直接走査して明るい背景を純白(255,255,255)に置換
       const imgData = ctx.getImageData(0, 0, width, height);
-      const d = imgData.data;
+      const data = imgData.data;
+      const visited = new Uint8Array(width * height);
 
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i];
-        const g = d[i+1];
-        const b = d[i+2];
+      // 四隅の色を基準色としてサンプリング
+      const bgR = data[0], bgG = data[1], bgB = data[2];
 
-        // 指定のしきい値より明るい領域を完全な白に飛ばす
-        if (r > threshold && g > threshold && b > threshold) {
-          d[i] = 255;
-          d[i+1] = 255;
-          d[i+2] = 255;
+      function colorMatch(idx) {
+        const r = data[idx], g = data[idx+1], b = data[idx+2];
+        return Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB) < tolerance * 3;
+      }
+
+      // 外周（エッジ）から塗りつぶしを開始するキュー
+      const queue = [];
+      for (let x = 0; x < width; x++) {
+        queue.push(x, 0);
+        queue.push(x, height - 1);
+      }
+      for (let y = 0; y < height; y++) {
+        queue.push(0, y);
+        queue.push(width - 1, y);
+      }
+
+      while (queue.length > 0) {
+        const y = queue.pop();
+        const x = queue.pop();
+        const pIdx = y * width + x;
+
+        if (visited[pIdx]) continue;
+        visited[pIdx] = 1;
+
+        const dIdx = pIdx * 4;
+        if (colorMatch(dIdx)) {
+          // 純白に置換
+          data[dIdx] = 255;
+          data[dIdx+1] = 255;
+          data[dIdx+2] = 255;
+
+          // 4方向へ探索
+          if (x > 0 && !visited[pIdx - 1]) queue.push(x - 1, y);
+          if (x < width - 1 && !visited[pIdx + 1]) queue.push(x + 1, y);
+          if (y > 0 && !visited[pIdx - width]) queue.push(x, y - 1);
+          if (y < height - 1 && !visited[pIdx + width]) queue.push(x, y + 1);
         }
       }
 
@@ -117,7 +149,7 @@
       const saveBtn = document.getElementById('save-btn');
       saveBtn.href = finalUrl;
 
-      document.getElementById('status').innerText = '✅ 完了！スライダーで微調整も可能です';
+      document.getElementById('status').innerText = '✅ 外側背景の白抜き完了！感度スライダーで調整できます';
       document.getElementById('preview-area').style.display = 'block';
       saveBtn.style.display = 'block';
     }
